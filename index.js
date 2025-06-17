@@ -24,6 +24,8 @@ async function run() {
     await client.connect();
     const database = client.db("volunteerDB");
     const postsCollection = database.collection("volunteerPosts");
+    const volunteerRequestsCollection =
+      database.collection("volunteerRequests");
 
     // 📌 Add Volunteer Post
     app.post("/posts", async (req, res) => {
@@ -56,6 +58,36 @@ async function run() {
       const id = req.params.id;
       const post = await postsCollection.findOne({ _id: new ObjectId(id) });
       res.send(post);
+    });
+
+    app.post("/volunteer-requests", async (req, res) => {
+      const request = req.body;
+
+      if (!request.postId) {
+        return res.status(400).send({ message: "postId is required." });
+      }
+      
+      const postId = new ObjectId(request.postId);
+      const post = await postsCollection.findOne({ _id: postId });
+
+      if (!post) {
+        return res.status(404).send({ message: "Post not found." });
+      }
+
+      if (post.volunteersNeeded <= 0) {
+        return res.status(400).send({ message: "No volunteers needed." });
+      }
+
+      // Insert volunteer request
+      const result = await volunteerRequestsCollection.insertOne(request);
+
+      // Decrease volunteersNeeded by 1
+      await postsCollection.updateOne(
+        { _id: postId },
+        { $inc: { volunteersNeeded: -1 } }
+      );
+
+      res.send(result);
     });
 
     await client.db("admin").command({ ping: 1 });
