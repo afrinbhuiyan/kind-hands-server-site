@@ -90,6 +90,28 @@ async function run() {
       res.send(result);
     });
 
+     app.get("/my-posts", async (req, res) => {
+      const email = req.query.email;
+      const result = await postsCollection
+        .find({ organizerEmail: email })
+        .toArray();
+      res.send(result);
+    });
+
+    app.get("/my-volunteer-requests", async (req, res) => {
+      const email = req.query.email;
+      const result = await volunteerRequestsCollection
+        .find({ volunteerEmail: email })
+        .toArray();
+      res.send(result);
+    });
+
+    app.delete("/my-posts/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await postsCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
