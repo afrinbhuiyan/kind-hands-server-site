@@ -48,8 +48,10 @@ const verifyFirebaseToken = async (req, res, next) => {
 };
 
 const verifyTokenEmail = (req, res, next) => {
-  if (req.query.email !== req.decoded.email) {
-    return res.status(403).massage({ message: "Forbidden Access" });
+  const emailInRequest =
+    req.method === "GET" ? req.query.email : req.body.volunteerEmail;
+  if (emailInRequest !== req.decoded.email) {
+    return res.status(403).send({ message: "Forbidden Access" });
   }
   next();
 };
