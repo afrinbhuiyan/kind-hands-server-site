@@ -4,7 +4,10 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 
 const admin = require("firebase-admin");
-const serviceAccount = require("./firebase-admin-services-key.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
+const serviceAccount = JSON.parse(decoded);
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -53,7 +56,7 @@ const verifyTokenEmail = (req, res, next) => {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     const database = client.db("volunteerDB");
     const postsCollection = database.collection("volunteerPosts");
@@ -227,7 +230,7 @@ async function run() {
       verifyFirebaseToken,
       async (req, res) => {
         const id = req.params.id;
-        
+
         const request = await volunteerRequestsCollection.findOne({
           _id: new ObjectId(id),
         });
@@ -237,11 +240,9 @@ async function run() {
         }
 
         if (request.volunteerEmail !== req.decoded.email) {
-          return res
-            .status(403)
-            .send({
-              message: "Forbidden: You can only delete your own request",
-            });
+          return res.status(403).send({
+            message: "Forbidden: You can only delete your own request",
+          });
         }
 
         const result = await volunteerRequestsCollection.deleteOne({
@@ -251,10 +252,10 @@ async function run() {
       }
     );
 
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
     // await client.close();
   }
