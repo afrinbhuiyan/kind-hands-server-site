@@ -41,6 +41,23 @@ async function run() {
       res.send(result);
     });
 
+    // 📌 Get first 6 posts for home page
+    app.get("/posts/home", async (req, res) => {
+      const result = await postsCollection
+        .find()
+        .sort({ deadline: 1 })
+        .limit(6)
+        .toArray();
+      res.send(result);
+    });
+
+    // 📌 Get single post by ID
+    app.get("/posts/:id", async (req, res) => {
+      const id = req.params.id;
+      const post = await postsCollection.findOne({ _id: new ObjectId(id) });
+      res.send(post);
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
