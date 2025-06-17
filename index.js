@@ -3,8 +3,12 @@ const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 
+const admin = require("firebase-admin");
+const serviceAccount = require("./firebase-admin-services-key.json");
+
 const app = express();
 const port = process.env.PORT || 5000;
+
 // Middlewares
 app.use(cors());
 app.use(express.json());
@@ -19,38 +23,61 @@ const client = new MongoClient(uri, {
   },
 });
 
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+const verifyFirebaseToken = async (req, res, next) => {
+  const authHeader = req.headers?.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).send({ message: "Unauthorized" });
+  }
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.decoded = decoded;
+    next();
+  } catch (error) {
+    res.status(401).send({ error: "Invalid Firebase token" });
+  }
+};
+
+const verifyTokenEmail = (req, res, next) => {
+  if (req.query.email !== req.decoded.email) {
+    return res.status(403).massage({ message: "Forbidden Access" });
+  }
+  next();
+};
+
 async function run() {
   try {
     await client.connect();
+
     const database = client.db("volunteerDB");
     const postsCollection = database.collection("volunteerPosts");
     const volunteerRequestsCollection =
       database.collection("volunteerRequests");
 
-    // 📌 Add Volunteer Post
     app.post("/posts", async (req, res) => {
       const postData = req.body;
       const result = await postsCollection.insertOne(postData);
       res.send(result);
     });
 
-    // 📌 Get all posts (sorted by deadline ascending)
     app.get("/posts", async (req, res) => {
-      const result = await postsCollection
-        .find()
-        .sort({ deadline: 1 }) // ascending order
-        .toArray();
+      const result = await postsCollection.find().toArray();
       res.send(result);
     });
 
     app.get("/posts/search", async (req, res) => {
       const searchTerm = req.query.title;
-      const query = { title: { $regex: searchTerm, $options: "i" } };Add commentMore actions
+      const query = { title: { $regex: searchTerm, $options: "i" } };
       const result = await postsCollection.find(query).toArray();
       res.send(result);
     });
 
-    // 📌 Get first 6 posts for home page
     app.get("/posts/home", async (req, res) => {
       const result = await postsCollection
         .find()
@@ -60,22 +87,30 @@ async function run() {
       res.send(result);
     });
 
-    // 📌 Get single post by ID
     app.get("/posts/:id", async (req, res) => {
       const id = req.params.id;
       const post = await postsCollection.findOne({ _id: new ObjectId(id) });
       res.send(post);
     });
 
-    app.post("/volunteer_requests", async (req, res) => {
-      const requestData = req.body;
-      const result = await volunteerRequestsCollection.insertOne(requestData);
-      res.send(result);
-    });
+    app.post(
+      "/volunteer_requests",
+      verifyFirebaseToken,
+      verifyTokenEmail,
+      async (req, res) => {
+        const requestData = req.body;
+        const result = await volunteerRequestsCollection.insertOne(requestData);
+        res.send(result);
+      }
+    );
 
     app.get("/volunteer_requests", async (req, res) => {
       const email = req.query.email;
-      const query = { volunteerEmail: email };
+
+      const query = {
+        volunteerEmail: email,
+      };
+
       const result = await volunteerRequestsCollection.find(query).toArray();
 
       for (const volunteer_requests of result) {
@@ -86,24 +121,105 @@ async function run() {
         volunteer_requests.category = request.category;
         volunteer_requests.deadline = request.deadline;
       }
+
       res.send(result);
     });
 
-     app.get("/my-posts", async (req, res) => {
-      const email = req.query.email;
-      const result = await postsCollection
-        .find({ organizerEmail: email })
-        .toArray();
+    app.patch("/posts/:id/decrement-volunteers", async (req, res) => {
+      const id = req.params.id;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid post ID" });
+      }
+
+      const post = await postsCollection.findOne({ _id: new ObjectId(id) });
+
+      let volunteersNeeded = post.volunteersNeeded;
+      if (typeof volunteersNeeded === "string") {
+        volunteersNeeded = parseInt(volunteersNeeded, 10);
+      }
+
+      const result = await postsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { volunteersNeeded: volunteersNeeded - 1 } }
+      );
+
+      if (result.modifiedCount === 0) {
+        return res
+          .status(404)
+          .json({ error: "Post not found or no change made" });
+      }
+
+      res.json(result);
+    });
+
+    app.get(
+      "/my-posts",
+      verifyFirebaseToken,
+      verifyTokenEmail,
+      async (req, res) => {
+        const email = req.query.email;
+        const result = await postsCollection
+          .find({ organizerEmail: email })
+          .toArray();
+        res.send(result);
+      }
+    );
+
+    app.put("/my-posts/:id", verifyFirebaseToken, async (req, res) => {
+      const id = req.params.id;
+      const updatedTask = req.body;
+
+      const post = await postsCollection.findOne({ _id: new ObjectId(id) });
+
+      if (!post) {
+        return res.status(404).send({ message: "Post not found" });
+      }
+
+      if (post.organizerEmail !== req.decoded.email) {
+        return res
+          .status(403)
+          .send({ message: "Forbidden: You are not the organizer" });
+      }
+
+      const result = await postsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updatedTask }
+      );
+
       res.send(result);
     });
 
-    app.get("/my-volunteer-requests", async (req, res) => {
-      const email = req.query.email;
-      const result = await volunteerRequestsCollection
-        .find({ volunteerEmail: email })
-        .toArray();
+    app.delete("/my-posts/:id", verifyFirebaseToken, async (req, res) => {
+      const id = req.params.id;
+      const post = await postsCollection.findOne({ _id: new ObjectId(id) });
+
+      if (!post) {
+        return res.status(404).send({ message: "Post not found" });
+      }
+
+      if (post.organizerEmail !== req.decoded.email) {
+        return res
+          .status(403)
+          .send({ message: "Forbidden: You are not the organizer" });
+      }
+
+      const result = await postsCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result);
     });
+
+    app.get(
+      "/my-volunteer-requests",
+      verifyFirebaseToken,
+      verifyTokenEmail,
+      async (req, res) => {
+        const email = req.query.email;
+        const result = await volunteerRequestsCollection
+          .find({ volunteerEmail: email })
+          .toArray();
+        res.send(result);
+      }
+    );
 
     // Delete a volunteer request
     app.delete(
@@ -111,7 +227,7 @@ async function run() {
       verifyFirebaseToken,
       async (req, res) => {
         const id = req.params.id;
-
+        
         const request = await volunteerRequestsCollection.findOne({
           _id: new ObjectId(id),
         });
@@ -121,24 +237,19 @@ async function run() {
         }
 
         if (request.volunteerEmail !== req.decoded.email) {
-          return res.status(403).send({
-            message: "Forbidden: You can only delete your own request",
-          });
+          return res
+            .status(403)
+            .send({
+              message: "Forbidden: You can only delete your own request",
+            });
         }
 
         const result = await volunteerRequestsCollection.deleteOne({
           _id: new ObjectId(id),
         });
-
         res.send(result);
       }
     );
-
-    app.delete("/my-posts/:id", async (req, res) => {
-      const id = req.params.id;
-      const result = await postsCollection.deleteOne({ _id: new ObjectId(id) });
-      res.send(result);
-    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
